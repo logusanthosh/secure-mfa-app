@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard | Secure MFA</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div class="dashboard-shell">
+      <div class="dashboard-container">
+        <div class="page-header d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div class="dashboard-brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v5c0 4.6 2.9 8.6 7 10 4.1-1.4 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></div><div><strong class="brand-text">MFA Secure</strong><p class="text-muted mb-0 small">Security control center</p></div></div>
+          <button id="logoutButton" type="button" class="btn btn-outline-danger">Logout</button>
+        </div>
+
+        <main class="dashboard-card">
+          <div class="dashboard-intro">
+            <div><p class="eyebrow">Account overview</p><h1 class="brand-text">Welcome back <span aria-hidden="true">👋</span></h1><p>Your secure account overview, at a glance.</p></div>
+            <span class="user-badge">Authenticated User</span>
+          </div>
+
+          <section class="security-status" aria-labelledby="securityTitle">
+            <div class="status-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v5c0 4.6 2.9 8.6 7 10 4.1-1.4 7-5.4 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></svg></div>
+            <div><h2 id="securityTitle">Account Security</h2><p>Your account is protected with Multi-Factor Authentication.</p></div>
+          </section>
+
+          <div class="security-grid" aria-label="Security methods">
+            <article class="security-card"><h3>Email &amp; Password</h3><span class="status-active">Active</span></article>
+            <article class="security-card"><h3>Email OTP</h3><span class="status-active">Enabled</span></article>
+            <article class="security-card"><h3>Google Sign-In</h3><span class="status-active">Available</span></article>
+          </div>
+
+          <section class="row g-3 mb-4" aria-label="Authenticated account details">
+            <div class="col-md-6"><div class="security-card h-100"><p class="text-muted mb-1">Name</p><h3 id="userName">Loading...</h3></div></div>
+            <div class="col-md-6"><div class="security-card h-100"><p class="text-muted mb-1">Email</p><h3 id="userEmail">Loading...</h3></div></div>
+            <div class="col-12"><div class="security-card"><p class="text-muted mb-1">Authentication Provider</p><h4 id="authProvider">Loading...</h4><p id="mfaStatus" class="mb-0 mt-2"></p></div></div>
+          </section>
+
+          <section class="activity-panel" aria-labelledby="activityTitle"><h2 id="activityTitle">Recent Security Activity</h2><p>Informational view only. Activity tracking is not enabled in this application yet.</p></section>
+        </main>
+      </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="js/firebase-config.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/dashboard.js"></script>
+  </body>
+</html>
