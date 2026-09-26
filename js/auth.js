@@ -92,7 +92,8 @@ const authManager = {
 
     const currentUser = this.getCurrentUser();
     const userId = currentUser && currentUser.uid ? currentUser.uid : '';
-const apiUrl = (window.OTP_API_BASE_URL || 'https://secure-mfa-app.onrender.com').replace(/\/$/, '');    console.info('OTP request started.');
+    const apiUrl = this.getOtpApiBaseUrl();
+    console.info('OTP request started.');
 
     let response;
     try {
@@ -126,6 +127,18 @@ const apiUrl = (window.OTP_API_BASE_URL || 'https://secure-mfa-app.onrender.com'
     return data;
   },
 
+  getOtpApiBaseUrl() {
+    if (window.OTP_API_BASE_URL) {
+      return String(window.OTP_API_BASE_URL).replace(/\/$/, '');
+    }
+
+    const defaultBaseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:3000'
+      : 'https://secure-mfa-app.onrender.com';
+
+    return defaultBaseUrl.replace(/\/$/, '');
+  },
+
   async verifyMfaOtp(email, otp) {
     const targetEmail = (email || '').trim();
     const otpCode = (otp || '').trim();
@@ -141,7 +154,7 @@ const apiUrl = (window.OTP_API_BASE_URL || 'https://secure-mfa-app.onrender.com'
     const currentUser = this.getCurrentUser();
     const userId = currentUser && currentUser.uid ? currentUser.uid : '';
     const challengeToken = sessionStorage.getItem('otpChallengeToken') || '';
-    const apiUrl = (window.OTP_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const apiUrl = this.getOtpApiBaseUrl();
     const response = await fetch(`${apiUrl}/api/otp/verify`, {
       method: 'POST',
       headers: {
@@ -174,7 +187,7 @@ const apiUrl = (window.OTP_API_BASE_URL || 'https://secure-mfa-app.onrender.com'
     const currentUser = this.getCurrentUser();
     const userId = currentUser && currentUser.uid ? currentUser.uid : '';
     const challengeToken = sessionStorage.getItem('otpChallengeToken') || '';
-    const apiUrl = (window.OTP_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const apiUrl = this.getOtpApiBaseUrl();
     const response = await fetch(`${apiUrl}/api/otp/resend`, {
       method: 'POST',
       headers: {
