@@ -92,8 +92,7 @@ const authManager = {
 
     const currentUser = this.getCurrentUser();
     const userId = currentUser && currentUser.uid ? currentUser.uid : '';
-    const apiUrl = (window.OTP_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
-    console.info('OTP request started.');
+const apiUrl = (window.OTP_API_BASE_URL || 'https://secure-mfa-app.onrender.com').replace(/\/$/, '');    console.info('OTP request started.');
 
     let response;
     try {
