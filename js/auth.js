@@ -105,7 +105,7 @@ const authManager = {
         body: JSON.stringify({ email: targetEmail, userId })
       });
     } catch (_error) {
-      const networkError = new Error('The OTP service could not be reached. Please make sure the backend is running on http://localhost:3000.');
+      const networkError = new Error('The OTP service could not be reached. Please check your network connection and the backend status.');
       networkError.isOtpRequestError = true;
       throw networkError;
     }
@@ -132,11 +132,17 @@ const authManager = {
       return String(window.OTP_API_BASE_URL).replace(/\/$/, '');
     }
 
-    const defaultBaseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-      ? 'http://localhost:3000'
-      : 'https://secure-mfa-app.onrender.com';
+    const hostname = String(window.location.hostname || '').toLowerCase();
 
-    return defaultBaseUrl.replace(/\/$/, '');
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3000';
+    }
+
+    if (hostname === 'mfa-user.web.app' || hostname === 'mfa-user.firebaseapp.com' || hostname.endsWith('.web.app')) {
+      return 'https://secure-mfa-app.onrender.com';
+    }
+
+    return 'https://secure-mfa-app.onrender.com';
   },
 
   async verifyMfaOtp(email, otp) {
