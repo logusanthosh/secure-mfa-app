@@ -4,6 +4,7 @@
   "description": "Local backend for secure email OTP MFA",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "server": "node server.js",
     "dev": "node server.js"
   },

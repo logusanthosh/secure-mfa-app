@@ -138,11 +138,17 @@ const authManager = {
       return 'http://localhost:3000';
     }
 
+    if (hostname === 'secure-mfa-app.onrender.com' || hostname.endsWith('.onrender.com')) {
+      return 'https://secure-mfa-app.onrender.com';
+    }
+
     if (hostname === 'mfa-user.web.app' || hostname === 'mfa-user.firebaseapp.com' || hostname.endsWith('.web.app')) {
       return 'https://secure-mfa-app.onrender.com';
     }
 
-    return 'https://secure-mfa-app.onrender.com';
+    return window.location.origin && window.location.origin !== 'null'
+      ? String(window.location.origin).replace(/\/$/, '')
+      : 'https://secure-mfa-app.onrender.com';
   },
 
   async verifyMfaOtp(email, otp) {

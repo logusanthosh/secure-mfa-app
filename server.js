@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
@@ -25,6 +26,7 @@ const allowedOrigins = new Set([
   'http://127.0.0.1:5500',
   'http://localhost:8080',
   'http://localhost:3000',
+  'https://secure-mfa-app.onrender.com',
   'https://mfa-user.web.app',
   'https://mfa-user.firebaseapp.com'
 ]);
@@ -101,6 +103,7 @@ const otpVerificationLimiter = rateLimit({
 });
 
 app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname), { index: 'index.html', extensions: ['html'] }));
 app.use(
   cors({
     origin(origin, callback) {
@@ -433,7 +436,7 @@ app.use((error, _req, res, _next) => {
   return res.status(500).json({ success: false, message: 'Internal server error.' });
 });
 
-app.listen(PORT, () => {
-  console.info(`OTP backend running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.info(`OTP backend running on http://0.0.0.0:${PORT}`);
   void verifySmtpConnection();
 });
