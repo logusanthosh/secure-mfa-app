@@ -156,7 +156,13 @@ async function createEmailTransport() {
     host: config.host,
     port: config.port,
     secure: config.secure,
-    auth: config.auth
+    auth: config.auth,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 10000,
+    tls: {
+      rejectUnauthorized: true
+    }
   });
 }
 
@@ -170,17 +176,37 @@ async function getEmailTransport() {
   return cachedTransport;
 }
 
+async function withSmtpTimeout(operation, timeoutMs = 10000) {
+  let timeoutHandle = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error('SMTP request timed out'));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 async function sendOtpEmail(email, otpValue) {
   const transporter = await getEmailTransport();
   const config = getSmtpConfig();
   const senderAddress = config.from;
 
-  const info = await transporter.sendMail({
+  const mailPromise = transporter.sendMail({
     from: senderAddress,
     to: email,
     subject: `${APP_NAME} verification code`,
     text: `Your secure verification code is ${otpValue}. This code expires in 5 minutes. Do not share this code with anyone.`
   });
+
+  const info = await withSmtpTimeout(mailPromise, 10000);
 
   if (info && info.messageId) {
     console.info('SMTP provider configured: Resend');
@@ -199,10 +225,10 @@ async function verifySmtpConnection() {
 
   try {
     const transporter = await getEmailTransport();
-    await transporter.verify();
+    await withSmtpTimeout(transporter.verify(), 10000);
     console.info('SMTP connection verified successfully');
   } catch (error) {
-    logSmtpFailure('SMTP verification failed', error);
+    logSmtpFailure('SMTP connection failed', error);
   }
 }
 
@@ -259,6 +285,7 @@ async function issueChallenge(email, userId) {
   } catch (error) {
     activeChallenges.delete(challengeToken);
     emailChallengeMap.delete(emailKey);
+    logSmtpFailure('SMTP send failed', error);
     throw Object.assign(new Error('Email delivery failed. Please try again later.'), {
       statusCode: 503,
       cause: error
