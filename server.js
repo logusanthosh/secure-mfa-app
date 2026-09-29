@@ -33,7 +33,7 @@ const allowedOrigins = new Set([
 
 function getSmtpConfig() {
   const host = String(process.env.EMAIL_HOST || '').trim();
-  const port = Number(process.env.EMAIL_PORT || 465);
+  const port = Number(process.env.EMAIL_PORT || 587);
   const user = String(process.env.EMAIL_USER || '').trim();
   const password = String(process.env.EMAIL_PASSWORD || '').trim();
   const from = String(process.env.EMAIL_FROM || '').trim();
@@ -45,7 +45,7 @@ function getSmtpConfig() {
   return {
     host,
     port,
-    secure: port === 465,
+    secure: false,
     auth: {
       user,
       pass: password
@@ -64,19 +64,11 @@ function getSmtpDiagnostics() {
   };
 }
 
-function sanitizeSmtpMessage(message) {
-  return String(message || 'SMTP operation failed.')
-    .replace(/(password|pass|api[_ -]?key|token|secret|authorization)\s*[:=]?\s*[^\s,;]+/gi, '$1=[redacted]')
-    .replace(/\r?\n/g, ' ')
-    .slice(0, 300);
-}
-
 function logSmtpFailure(prefix, error) {
   console.warn(`${prefix}:`, {
     code: error && error.code ? error.code : undefined,
     command: error && error.command ? error.command : undefined,
-    responseCode: error && error.responseCode ? error.responseCode : undefined,
-    message: sanitizeSmtpMessage(error && error.message)
+    responseCode: error && error.responseCode ? error.responseCode : undefined
   });
 }
 
@@ -157,9 +149,10 @@ async function createEmailTransport() {
     port: config.port,
     secure: config.secure,
     auth: config.auth,
+    requireTLS: true,
     connectionTimeout: 10000,
     greetingTimeout: 10000,
-    socketTimeout: 10000,
+    socketTimeout: 15000,
     tls: {
       rejectUnauthorized: true
     }
@@ -176,24 +169,6 @@ async function getEmailTransport() {
   return cachedTransport;
 }
 
-async function withSmtpTimeout(operation, timeoutMs = 10000) {
-  let timeoutHandle = null;
-
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error('SMTP request timed out'));
-    }, timeoutMs);
-  });
-
-  try {
-    return await Promise.race([operation, timeoutPromise]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-}
-
 async function sendOtpEmail(email, otpValue) {
   const transporter = await getEmailTransport();
   const config = getSmtpConfig();
@@ -206,7 +181,7 @@ async function sendOtpEmail(email, otpValue) {
     text: `Your secure verification code is ${otpValue}. This code expires in 5 minutes. Do not share this code with anyone.`
   });
 
-  const info = await withSmtpTimeout(mailPromise, 10000);
+  const info = await mailPromise;
 
   if (info && info.messageId) {
     console.info('SMTP provider configured: Resend');
@@ -225,7 +200,7 @@ async function verifySmtpConnection() {
 
   try {
     const transporter = await getEmailTransport();
-    await withSmtpTimeout(transporter.verify(), 10000);
+    await transporter.verify();
     console.info('SMTP connection verified successfully');
   } catch (error) {
     logSmtpFailure('SMTP connection failed', error);
