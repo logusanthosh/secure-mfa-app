@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const {
   generateSixDigitOtp,
   hashOtp,
@@ -32,44 +32,23 @@ const allowedOrigins = new Set([
   'https://mfa-user.firebaseapp.com'
 ]);
 
-function getSmtpConfig() {
-  const host = String(process.env.EMAIL_HOST || '').trim();
-  const port = Number(process.env.EMAIL_PORT || 587);
-  const user = String(process.env.EMAIL_USER || '').trim();
-  const password = String(process.env.EMAIL_PASSWORD || '').trim();
+function getEmailConfig() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
   const from = String(process.env.EMAIL_FROM || '').trim();
 
-  if (!host || !user || !password || !from) {
-    throw new Error('SMTP configuration is incomplete. Set EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, and EMAIL_FROM in the environment.');
+  if (!apiKey || !from) {
+    throw new Error('Email delivery is not configured.');
   }
 
-  return {
-    host,
-    port,
-    secure: false,
-    auth: {
-      user,
-      pass: password
-    },
-    from
-  };
+  return { apiKey, from };
 }
 
-function getSmtpDiagnostics() {
-  return {
-    hostConfigured: Boolean(String(process.env.EMAIL_HOST || '').trim()),
-    portConfigured: Boolean(String(process.env.EMAIL_PORT || '').trim()),
-    usernameConfigured: Boolean(String(process.env.EMAIL_USER || '').trim()),
-    passwordConfigured: Boolean(String(process.env.EMAIL_PASSWORD || '').trim()),
-    fromConfigured: Boolean(String(process.env.EMAIL_FROM || '').trim())
-  };
-}
-
-function logSmtpFailure(prefix, error) {
+function logResendFailure(prefix, error) {
+  const statusCode = Number(error && error.statusCode);
+  const hasStatusCode = Number.isInteger(statusCode) && statusCode > 0;
   console.warn(`${prefix}:`, {
-    code: error && error.code ? error.code : undefined,
-    command: error && error.command ? error.command : undefined,
-    responseCode: error && error.responseCode ? error.responseCode : undefined
+    name: hasStatusCode ? 'ResendApiError' : 'ResendRequestError',
+    statusCode: hasStatusCode ? statusCode : undefined
   });
 }
 
@@ -154,69 +133,43 @@ function invalidatePreviousChallenge(emailKey) {
   emailChallengeMap.delete(emailKey);
 }
 
-async function createEmailTransport() {
-  const config = getSmtpConfig();
+const RESEND_REQUEST_TIMEOUT_MS = 15000;
+let cachedResendClient = null;
 
-  return nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.secure,
-    auth: config.auth,
-    requireTLS: true,
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 15000,
-    tls: {
-      rejectUnauthorized: true
-    }
-  });
-}
-
-let cachedTransport = null;
-
-async function getEmailTransport() {
-  if (!cachedTransport) {
-    cachedTransport = await createEmailTransport();
+function getResendClient(apiKey) {
+  if (!cachedResendClient) {
+    cachedResendClient = new Resend(apiKey);
+    cachedResendClient.logError = () => {};
   }
 
-  return cachedTransport;
+  return cachedResendClient;
 }
 
 async function sendOtpEmail(email, otpValue) {
-  const transporter = await getEmailTransport();
-  const config = getSmtpConfig();
-  const senderAddress = config.from;
-
-  const mailPromise = transporter.sendMail({
-    from: senderAddress,
-    to: email,
-    subject: `${APP_NAME} verification code`,
-    text: `Your secure verification code is ${otpValue}. This code expires in 5 minutes. Do not share this code with anyone.`
-  });
-
-  const info = await mailPromise;
-
-  if (info && info.messageId) {
-    console.info('SMTP provider configured: Resend');
-  }
-
-  return info;
-}
-
-async function verifySmtpConnection() {
-  const diagnostics = getSmtpDiagnostics();
-  console.info('SMTP host configured:', diagnostics.hostConfigured ? 'yes' : 'no');
-  console.info('SMTP port configured:', diagnostics.portConfigured ? 'yes' : 'no');
-  console.info('SMTP username configured:', diagnostics.usernameConfigured ? 'yes' : 'no');
-  console.info('SMTP password configured:', diagnostics.passwordConfigured ? 'yes' : 'no');
-  console.info('EMAIL_FROM configured:', diagnostics.fromConfigured ? 'yes' : 'no');
+  const config = getEmailConfig();
+  const resend = getResendClient(config.apiKey);
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), RESEND_REQUEST_TIMEOUT_MS);
 
   try {
-    const transporter = await getEmailTransport();
-    await transporter.verify();
-    console.info('SMTP connection verified successfully');
-  } catch (error) {
-    logSmtpFailure('SMTP connection failed', error);
+    const { data, error } = await resend.emails.send({
+      from: config.from,
+      to: email,
+      subject: `${APP_NAME} verification code`,
+      text: `Your secure verification code is ${otpValue}. This code expires in 5 minutes. Do not share this code with anyone.`
+    }, { signal: controller.signal });
+
+    if (error) {
+      throw Object.assign(new Error('Resend email delivery failed.'), {
+        name: error.name || 'ResendError',
+        statusCode: error.statusCode,
+        cause: error
+      });
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -273,7 +226,7 @@ async function issueChallenge(email, userId) {
   } catch (error) {
     activeChallenges.delete(challengeToken);
     emailChallengeMap.delete(emailKey);
-    logSmtpFailure('SMTP send failed', error);
+    logResendFailure('Resend email send failed', error.cause || error);
     throw Object.assign(new Error('Email delivery failed. Please try again later.'), {
       statusCode: 503,
       cause: error
@@ -321,7 +274,6 @@ app.post('/api/otp/request', otpRequestLimiter, async (req, res) => {
       expiresInSeconds: result.expiresInSeconds
     });
   } catch (error) {
-    logSmtpFailure('OTP request failed', error.cause || error);
     const statusCode = Number(error.statusCode || 500);
     if (statusCode === 429 && error.retrySeconds) {
       res.set('Retry-After', String(error.retrySeconds));
@@ -467,5 +419,4 @@ app.use((error, _req, res, _next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.info(`OTP backend running on http://0.0.0.0:${PORT}`);
-  void verifySmtpConnection();
 });

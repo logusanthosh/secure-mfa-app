@@ -3,45 +3,10 @@
 // with real email and environment variables before use.
 
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_ATTEMPT_LIMIT = 5;
 const RESEND_COOLDOWN_MS = 60 * 1000;
-
-function getEmailConfig() {
-  const host = String(process.env.EMAIL_HOST || '').trim();
-  const port = Number(process.env.EMAIL_PORT || 465);
-  const user = String(process.env.EMAIL_USER || '').trim();
-  const password = String(process.env.EMAIL_PASSWORD || '').trim();
-  const from = String(process.env.EMAIL_FROM || '').trim();
-
-  if (!host || !user || !password || !from) {
-    throw new Error('Email backend configuration is missing. Set EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, and EMAIL_FROM.');
-  }
-
-  return {
-    host,
-    port,
-    secure: port === 465,
-    auth: {
-      user,
-      pass: password
-    },
-    from
-  };
-}
-
-function createConfiguredTransport() {
-  const config = getEmailConfig();
-
-  return nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.secure,
-    auth: config.auth
-  });
-}
 
 function generateSixDigitOtp() {
   return crypto.randomInt(100000, 999999).toString();
@@ -66,18 +31,6 @@ function createOtpRecord(userId, email, otpValue) {
     invalidated: false,
     lastGeneratedAt: now
   };
-}
-
-async function sendOtpEmail(email, otpValue) {
-  const config = getEmailConfig();
-  const transporter = createConfiguredTransport();
-
-  await transporter.sendMail({
-    from: config.from,
-    to: email,
-    subject: 'Your MFA verification code',
-    text: `Your secure verification code is ${otpValue}. This code expires in 5 minutes.`
-  });
 }
 
 function verifyOtpCandidate(storedOtp, submittedOtp) {
@@ -105,7 +58,6 @@ module.exports = {
   generateSixDigitOtp,
   hashOtp,
   createOtpRecord,
-  sendOtpEmail,
   verifyOtpCandidate
 };
 
