@@ -15,6 +15,7 @@ const {
 } = require('./functions/otp-backend');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = Number(process.env.PORT || 3000);
 const APP_NAME = 'Secure MFA App';
 const activeChallenges = new Map();
@@ -83,6 +84,17 @@ const otpRequestLimiter = rateLimit({
   }
 });
 
+const otpResendLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many OTP requests. Please wait a moment and try again.'
+  }
+});
+
 const otpVerificationLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
@@ -108,6 +120,7 @@ app.use(
     },
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type'],
+    exposedHeaders: ['Retry-After', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset', 'RateLimit-Policy'],
     credentials: false
   })
 );
@@ -253,10 +266,10 @@ async function issueChallenge(email, userId) {
   const { challengeToken, otpValue, record } = buildChallengeRecord(emailKey, userId || null);
   activeChallenges.set(challengeToken, record);
   emailChallengeMap.set(emailKey, challengeToken);
-  requestCooldowns.set(emailKey, now);
 
   try {
     await sendOtpEmail(emailKey, otpValue);
+    requestCooldowns.set(emailKey, now);
   } catch (error) {
     activeChallenges.delete(challengeToken);
     emailChallengeMap.delete(emailKey);
@@ -310,7 +323,14 @@ app.post('/api/otp/request', otpRequestLimiter, async (req, res) => {
   } catch (error) {
     logSmtpFailure('OTP request failed', error.cause || error);
     const statusCode = Number(error.statusCode || 500);
-    const safeMessage = error.message || 'Unable to start MFA verification right now.';
+    if (statusCode === 429 && error.retrySeconds) {
+      res.set('Retry-After', String(error.retrySeconds));
+    }
+    const safeMessage = statusCode === 429
+      ? 'Too many OTP requests. Please wait and try again.'
+      : statusCode < 500
+        ? error.message
+        : 'Unable to send an OTP right now. Please try again later.';
     res.status(statusCode).json({
       success: false,
       message: safeMessage
@@ -397,7 +417,7 @@ app.post('/api/otp/verify', otpVerificationLimiter, async (req, res) => {
   }
 });
 
-app.post('/api/otp/resend', otpRequestLimiter, async (req, res) => {
+app.post('/api/otp/resend', otpResendLimiter, async (req, res) => {
   try {
     const { email, userId, challengeToken } = req.body || {};
     const emailKey = normalizeEmail(email);
@@ -425,7 +445,14 @@ app.post('/api/otp/resend', otpRequestLimiter, async (req, res) => {
     });
   } catch (error) {
     const statusCode = Number(error.statusCode || 500);
-    const safeMessage = error.message || 'Unable to resend OTP right now.';
+    if (statusCode === 429 && error.retrySeconds) {
+      res.set('Retry-After', String(error.retrySeconds));
+    }
+    const safeMessage = statusCode === 429
+      ? 'Too many OTP requests. Please wait and try again.'
+      : statusCode < 500
+        ? error.message
+        : 'Unable to resend the OTP right now. Please try again later.';
     res.status(statusCode).json({ success: false, message: safeMessage });
   }
 });

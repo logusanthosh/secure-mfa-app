@@ -4,6 +4,8 @@ const authManager = {
   initialized: false,
   authStateListenerAttached: false,
   stateCallbacks: [],
+  otpRequestPromise: null,
+  otpRequestEmail: null,
 
   init() {
     if (this.initialized) {
@@ -90,6 +92,38 @@ const authManager = {
       throw new Error('Email is required before starting MFA verification.');
     }
 
+    if (this.otpRequestPromise) {
+      if (this.otpRequestEmail === targetEmail) {
+        return this.otpRequestPromise;
+      }
+
+      const pendingError = new Error('An OTP request is already in progress. Please wait and try again.');
+      pendingError.isOtpRequestError = true;
+      throw pendingError;
+    }
+
+    const cooldownUntil = Number(sessionStorage.getItem('otpCooldownUntil') || 0);
+    const cooldownSeconds = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+    if (cooldownSeconds > 0) {
+      const cooldownError = new Error(`Too many OTP requests. Please wait and try again in ${cooldownSeconds} seconds.`);
+      cooldownError.isOtpRequestError = true;
+      throw cooldownError;
+    }
+
+    const requestPromise = this.sendMfaOtpRequest(targetEmail);
+    this.otpRequestPromise = requestPromise;
+    this.otpRequestEmail = targetEmail;
+    try {
+      return await requestPromise;
+    } finally {
+      if (this.otpRequestPromise === requestPromise) {
+        this.otpRequestPromise = null;
+        this.otpRequestEmail = null;
+      }
+    }
+  },
+
+  async sendMfaOtpRequest(targetEmail) {
     const currentUser = this.getCurrentUser();
     const userId = currentUser && currentUser.uid ? currentUser.uid : '';
     const apiUrl = this.getOtpApiBaseUrl();
@@ -114,8 +148,19 @@ const authManager = {
     console.info(`OTP request backend response: ${response.status}.`);
 
     if (!response.ok) {
-      const requestError = new Error(data.message || 'Unable to start MFA verification right now.');
+      const requestError = new Error(response.status === 429
+        ? 'Too many OTP requests. Please wait and try again.'
+        : response.status >= 500
+          ? 'Unable to send an OTP right now. Please try again later.'
+          : data.message || 'Unable to start MFA verification right now.');
       requestError.isOtpRequestError = true;
+      if (response.status === 429) {
+        const retrySeconds = this.getOtpRetryAfterSeconds(response, data);
+        if (retrySeconds > 0) {
+          sessionStorage.setItem('otpCooldownUntil', String(Date.now() + retrySeconds * 1000));
+          requestError.message = `${requestError.message} Try again in ${retrySeconds} seconds.`;
+        }
+      }
       throw requestError;
     }
 
@@ -125,6 +170,32 @@ const authManager = {
     }
     sessionStorage.setItem('otpCooldownUntil', String(Date.now() + 60000));
     return data;
+  },
+
+  getOtpRetryAfterSeconds(response, data) {
+    const retryAfter = response.headers.get('Retry-After');
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.ceil(seconds);
+      }
+
+      const retryDate = Date.parse(retryAfter);
+      if (Number.isFinite(retryDate)) {
+        return Math.max(1, Math.ceil((retryDate - Date.now()) / 1000));
+      }
+    }
+
+    const resetValue = Number(response.headers.get('RateLimit-Reset') || response.headers.get('ratelimit-reset'));
+    if (Number.isFinite(resetValue) && resetValue > 0) {
+      const nowSeconds = Date.now() / 1000;
+      return Math.max(1, Math.ceil(resetValue > nowSeconds ? resetValue - nowSeconds : resetValue));
+    }
+
+    const bodyRetrySeconds = Number(data.retrySeconds);
+    return Number.isFinite(bodyRetrySeconds) && bodyRetrySeconds > 0
+      ? Math.ceil(bodyRetrySeconds)
+      : 60;
   },
 
   getOtpApiBaseUrl() {
@@ -351,7 +422,7 @@ document.addEventListener('DOMContentLoaded', () => {
           window.location.href = 'verify-otp.html';
         }
       } catch (error) {
-        setAlert('loginMessage', 'danger', formatFirebaseError(error));
+        setAlert('loginMessage', 'danger', error.isOtpRequestError ? error.message : formatFirebaseError(error));
       } finally {
         if (loginButton) {
           loginButton.disabled = false;
