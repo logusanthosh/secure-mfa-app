@@ -5,7 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const {
   generateSixDigitOtp,
@@ -37,38 +37,45 @@ const allowedOrigins = new Set([
 ]);
 
 /* =========================================================
-   EMAIL CONFIGURATION - RESEND API
+   EMAIL CONFIGURATION - GMAIL SMTP
    ========================================================= */
 
-function getEmailConfig() {
-  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
-  const from = String(process.env.EMAIL_FROM || '').trim();
-
-  if (!apiKey) {
-    const error = new Error('RESEND_API_KEY is not configured.');
-    error.statusCode = 500;
-    throw error;
+const smtpTransporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: Number(process.env.EMAIL_PORT || 465),
+  secure: process.env.EMAIL_SECURE !== 'false',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASSWORD
   }
+});
 
-  if (!from) {
-    const error = new Error('EMAIL_FROM is not configured.');
-    error.statusCode = 500;
-    throw error;
-  }
-
-  return {
-    apiKey,
-    from
-  };
+function isSmtpConfigured() {
+  return Boolean(
+    String(process.env.EMAIL_HOST || '').trim() &&
+    String(process.env.EMAIL_USER || '').trim() &&
+    String(process.env.EMAIL_PASSWORD || '').trim() &&
+    String(process.env.EMAIL_FROM || '').trim()
+  );
 }
 
-function logResendFailure(prefix, error) {
+function getEmailConfig() {
+  const from = String(process.env.EMAIL_FROM || '').trim();
+
+  if (!isSmtpConfigured()) {
+    const error = new Error('SMTP configuration is incomplete.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  return { from };
+}
+
+function logSmtpFailure(prefix, error) {
   console.error(`${prefix}:`, {
     name: error?.name,
-    message: error?.message,
-    statusCode: error?.statusCode,
     code: error?.code,
-    cause: error?.cause?.message
+    responseCode: error?.responseCode
   });
 }
 
@@ -185,101 +192,21 @@ function invalidatePreviousChallenge(emailKey) {
 }
 
 /* =========================================================
-   RESEND CLIENT
-   ========================================================= */
-
-const RESEND_REQUEST_TIMEOUT_MS = 15000;
-
-let cachedResendClient = null;
-let cachedResendApiKey = '';
-
-function getResendClient(apiKey) {
-  if (
-    !cachedResendClient ||
-    cachedResendApiKey !== apiKey
-  ) {
-    cachedResendClient = new Resend(apiKey);
-    cachedResendApiKey = apiKey;
-
-    if (typeof cachedResendClient.logError !== 'undefined') {
-      cachedResendClient.logError = () => {};
-    }
-  }
-
-  return cachedResendClient;
-}
-
-/* =========================================================
    SEND OTP EMAIL
    ========================================================= */
 
 async function sendOtpEmail(email, otpValue) {
   const config = getEmailConfig();
 
-  const resend = getResendClient(config.apiKey);
-
-  const controller = new AbortController();
-
-  const timeoutHandle = setTimeout(() => {
-    controller.abort();
-  }, RESEND_REQUEST_TIMEOUT_MS);
-
-  try {
-    console.info('Sending OTP email through Resend...');
-
-    const result = await resend.emails.send(
-      {
-        from: config.from,
-        to: email,
-        subject: `${APP_NAME} verification code`,
-        text:
-          `Your secure verification code is ${otpValue}. ` +
-          `This code expires in 5 minutes. ` +
-          `Do not share this code with anyone.`
-      },
-      {
-        signal: controller.signal
-      }
-    );
-
-    const data = result?.data;
-    const error = result?.error;
-
-    if (error) {
-      throw Object.assign(
-        new Error(
-          error.message || 'Resend email delivery failed.'
-        ),
-        {
-          name: error.name || 'ResendApiError',
-          statusCode: error.statusCode,
-          cause: error
-        }
-      );
-    }
-
-    if (!data) {
-      throw new Error('Resend did not return an email ID.');
-    }
-
-    console.info('OTP email accepted by Resend.');
-
-    return data;
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      throw Object.assign(
-        new Error('Resend request timed out.'),
-        {
-          code: 'RESEND_TIMEOUT',
-          cause: error
-        }
-      );
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
+  return smtpTransporter.sendMail({
+    from: config.from,
+    to: email,
+    subject: `${APP_NAME} verification code`,
+    text:
+      `Your secure verification code is ${otpValue}. ` +
+      `This code expires in 5 minutes. ` +
+      `Do not share this code with anyone.`
+  });
 }
 
 /* =========================================================
@@ -399,8 +326,8 @@ async function issueChallenge(email, userId) {
       emailKey
     );
 
-    logResendFailure(
-      'Resend email send failed',
+    logSmtpFailure(
+      'SMTP email send failed',
       error
     );
 
@@ -878,22 +805,22 @@ app.listen(
       `OTP backend running on http://0.0.0.0:${PORT}`
     );
 
-    console.info(
-      'Resend API key configured:',
-      Boolean(
-        String(
-          process.env.RESEND_API_KEY || ''
-        ).trim()
-      )
-    );
+    const smtpConfigured = isSmtpConfigured();
+    console.info('SMTP configuration complete:', smtpConfigured);
 
-    console.info(
-      'EMAIL_FROM configured:',
-      Boolean(
-        String(
-          process.env.EMAIL_FROM || ''
-        ).trim()
-      )
+    if (!smtpConfigured) {
+      console.info('SMTP connection verified: false');
+      return;
+    }
+
+    smtpTransporter.verify().then(
+      () => {
+        console.info('SMTP connection verified: true');
+      },
+      (error) => {
+        logSmtpFailure('SMTP connection verification failed', error);
+        console.info('SMTP connection verified: false');
+      }
     );
   }
 );
