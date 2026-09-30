@@ -42,6 +42,7 @@ const allowedOrigins = new Set([
 
 const smtpTransporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
+  family: 4,
   port: 587,
   secure: false,
   requireTLS: true,
